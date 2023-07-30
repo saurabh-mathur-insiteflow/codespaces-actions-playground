@@ -1,0 +1,65 @@
+name: Deploy to production
+on:
+  workflow_dispatch:
+    branches:
+      - 'main'
+    inputs:
+      facility:
+        description: "Facility Id Prefix"
+        required: true
+        type: string
+env:
+  AWS_REGION: us-east-1
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: Production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Prepare the .env file
+        env:
+          REACT_APP_API_URL: ${{format('https://{0}-api.vpi-cust.insiteflow.io/api/v1', ${{github.event.inputs.facility}})}}
+        run: |
+          echo "Setting env file entry REACT_APP_API_URL to be ${{env.REACT_APP_API_URL}}"
+          echo "REACT_APP_API_URL=${{env.REACT_APP_API_URL}}" > .env 
+
+      - name: install latest npm
+        run: |
+          npm install -g npm &&
+          npm --version &&
+          npm list -g --depth 0
+
+      - name: Build React App
+        run: npm install && CI=false npm run build
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: $AWS_REGION
+          role-to-assume: arn:aws:iam::360761307738:role/GithubDeployment
+          role-session-name: GithubDeployment
+
+
+      - name: Deploy app build to S3 bucket
+        env:
+          S3_BUCKET: ${{format('insiteflow-{0}-vpi-prod-frontend', github.event.inputs.facility)
+        run: |
+          echo "Setting app build bucket to be ${{env.S3_BUCKET}}"
+          aws s3 sync ./build/ s3://${{env.S3_BUCKET}} --delete
+
+      - name: Invalidate existing Cloudfront
+        env:
+          CLOUDFRONT_ID_VAR: ${{format('Cloudfront_Id-{0}', github.event.inputs.facility)}}
+        run: |
+          echo "CLOUDFRONT_ID_VAR=${{env.COUDFRONT_ID_VAR}}"
+          echo "CLOUDFRONT_ID=${{vars.CLOUDFRONT_ID_VAR}}"
+          echo "Setting cloud formation ditribution to be $CLOUDFRONT_ID"
+          aws cloudfront create-invalidation --distribution-id $CLOUDFRONT_ID --paths "/*"
